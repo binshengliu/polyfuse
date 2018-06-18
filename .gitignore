@@ -4,3 +4,5 @@ polyfuse
 uqvconvert/tmp
 uqvconvert/out.txt
 uqvconvert/nums
+/compile_commands.json
+/.cquery_cached_index/
