@@ -39,6 +39,9 @@ static enum fusetype cmd = TNONE;
 static char cmd_str[CMDSTR_LEN] = {0};
 static long double phi = 0.8;
 static long rrf_k = 60;
+static double *run_weights = NULL;
+static int run_weights_size = 0;
+static int run_weight_index = 0;
 static enum trec_norm fnorm = TNORM_NONE;
 static size_t depth = DEFAULT_DEPTH;
 static bool prevent_ties = false;
@@ -59,6 +62,14 @@ const char *default_runid[] = {
     "polyfuse-logisr",
 };
 
+static double next_weight()
+{
+    if (run_weight_index >= run_weights_size) {
+      return 1.0;
+    }
+
+    return run_weights[run_weight_index++];
+}
 static int
 parse_opt(int argc, char **argv);
 
@@ -103,6 +114,33 @@ is_score_based(enum fusetype type)
     }
 }
 
+static void
+parse_run_weights(char *arg_weight)
+{
+  int size = 0;
+  int capacity = 64;
+  double *local_weights = bmalloc(capacity * sizeof(float));
+  char *tok = strtok(arg_weight, ",");
+
+  while (tok) {
+    while (capacity <= size) {
+      capacity *= 2;
+      local_weights = brealloc(local_weights, capacity);
+    }
+    local_weights[size++] = strtod(tok, NULL);
+    tok = strtok(NULL, ",");
+  }
+
+  if (run_weights) {
+    free(run_weights);
+    run_weights = NULL;
+    run_weights_size = 0;
+  }
+
+  run_weights = local_weights;
+  run_weights_size = size;
+}
+
 int
 main(int argc, char **argv)
 {
@@ -134,7 +172,7 @@ main(int argc, char **argv)
         }
 
         pf_weight_alloc(phi, r->max_rank);
-        pf_accumulate(r);
+        pf_accumulate(r, next_weight());
         trec_destroy(r);
         fclose(fp);
     }
@@ -142,6 +180,7 @@ main(int argc, char **argv)
     pf_present(stdout, runid, depth, prevent_ties);
     pf_destory();
     free(runid);
+    free(run_weights);
 
     return 0;
 }
@@ -214,11 +253,11 @@ parse_opt(int argc, char **argv)
         optind++;
     }
 
-    char opt_str[8] = {0};
+    char opt_str[16] = {0};
     if (TRBC == cmd) {
         strcpy(opt_str, "td:r:p:");
     } else if (TRRF == cmd) {
-        strcpy(opt_str, "td:r:k:");
+        strcpy(opt_str, "td:r:k:w:");
     } else if (is_score_based(cmd)) {
         strcpy(opt_str, "td:r:n:");
     } else {
@@ -238,6 +277,9 @@ parse_opt(int argc, char **argv)
             break;
         case 'k':
             rrf_k = strtol(optarg, NULL, 10);
+            break;
+        case 'w':
+            parse_run_weights(optarg);
             break;
         case 'n':
             fnorm = strtonorm(optarg);
@@ -307,7 +349,8 @@ usage(void)
         "\nrbc options:\n"
         "  -p num       user persistence in the range (0.0,1.0)\n"
         "\nrrf options:\n"
-        "  -k num       constant to control outlier rankings\n\n");
+        "  -k num       constant to control outlier rankings\n"
+        "  -w w1,w2,... weights of run files, e.g. -w 0.3,0.3,0.4\n\n");
 }
 
 static void
@@ -320,6 +363,12 @@ present_args()
         fprintf(stderr, "# phi: %Lf\n", phi);
     } else if (TRRF == cmd) {
         fprintf(stderr, "# k: %ld\n", rrf_k);
+        fprintf(stderr, "# w: ");
+        for (int i = 0; i < run_weights_size; ++i) {
+          fprintf(stderr, "%lf ", run_weights[i]);
+        }
+        fprintf(stderr, "\n");
+
     } else if (is_score_based(cmd)) {
         fprintf(stderr, "# normalization: %s\n", trec_norm_str[fnorm]);
     }
